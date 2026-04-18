@@ -10,7 +10,7 @@ import math
 import tempfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
+from moviepy import VideoClip, AudioFileClip, concatenate_videoclips
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 
@@ -355,13 +355,13 @@ SCENES = [
 ]
 
 
-def build_clip(name: str, frame_fn, duration: float) -> ImageClip:
+def build_clip(name: str, frame_fn, duration: float) -> VideoClip:
     print(f"  Rendering scene: {name} ({duration}s)")
 
     def make_frame(t):
         return frame_fn(t, duration)
 
-    return ImageClip(make_frame, duration=duration).with_fps(FPS)
+    return VideoClip(make_frame, duration=duration).with_fps(FPS)
 
 
 # ── ElevenLabs voiceover ──────────────────────────────────────────────────────
@@ -392,13 +392,34 @@ def generate_voiceover(api_key: str) -> str:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def make_silent_audio(duration: float, path: str) -> str:
+    """Generate a silent WAV file as a fallback when ElevenLabs is unavailable."""
+    import wave, struct
+    sample_rate = 44100
+    n_samples = int(sample_rate * duration)
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(struct.pack("<" + "h" * n_samples, *([0] * n_samples)))
+    return path
+
+
 def main():
     api_key = os.environ.get("ELEVENLABS_API_KEY")
     if not api_key:
         print("ERROR: Set the ELEVENLABS_API_KEY environment variable before running.")
         sys.exit(1)
 
-    audio_path = generate_voiceover(api_key)
+    total_duration = sum(dur for _, _, dur in SCENES)
+
+    try:
+        audio_path = generate_voiceover(api_key)
+    except Exception as e:
+        print(f"  WARNING: ElevenLabs failed ({e})")
+        print("  Falling back to silent audio — fix the API key allowlist to add voiceover.")
+        silent_path = AUDIO_PATH.replace(".mp3", "_silent.wav")
+        audio_path = make_silent_audio(total_duration, silent_path)
 
     print("Building video clips…")
     clips = [build_clip(name, fn, dur) for name, fn, dur in SCENES]
@@ -407,7 +428,6 @@ def main():
     print("Attaching audio…")
     audio = AudioFileClip(audio_path)
 
-    # trim audio to match video length if needed
     if audio.duration > video.duration:
         audio = audio.subclipped(0, video.duration)
     elif audio.duration < video.duration:
