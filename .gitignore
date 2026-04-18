@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 voiceover.mp3
+voiceover_silent.wav
 google_stitch_motion.mp4
